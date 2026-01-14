@@ -2,7 +2,16 @@
 //  ItemDetailSheet.swift
 //  DealFlow
 //
-//  Sheet de détail d'un item de checklist
+//  Sheet de détail d'un item de checklist.
+//
+//  Cette vue permet de :
+//  - Modifier le statut de l'item (Non vérifié, Bon, Moyen, Mauvais)
+//  - Ajouter des notes textuelles libres
+//  - Estimer le coût des travaux si nécessaire
+//  - Prendre une photo directement avec l'appareil photo
+//  - Importer une photo depuis la galerie
+//  - Visualiser et supprimer les photos associées
+//  - Réinitialiser l'item à son état initial
 //
 
 import SwiftUI
@@ -74,7 +83,14 @@ struct ItemDetailSheet: View {
                         }
                     }
                     
-                    // Boutons d'ajout
+                    // Bouton prise de photo avec l'appareil
+                    Button {
+                        showCamera = true
+                    } label: {
+                        Label("Prendre une photo", systemImage: "camera")
+                    }
+                    
+                    // Bouton import depuis la galerie
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         Label("Depuis la galerie", systemImage: "photo.on.rectangle")
                     }
@@ -114,6 +130,11 @@ struct ItemDetailSheet: View {
             .onAppear {
                 costText = item.estimatedCost > 0 ? "\(Int(item.estimatedCost))" : ""
             }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker { image in
+                    savePhoto(image)
+                }
+            }
         }
     }
     
@@ -131,12 +152,21 @@ struct ItemDetailSheet: View {
                 try? modelContext.save()
             }
         } catch {
-            // MVP: ignorer les erreurs silencieusement
             print("Erreur lors du chargement de la photo: \(error)")
         }
         
-        // Reset le picker
         self.pickerItem = nil
+    }
+    
+    private func savePhoto(_ image: UIImage) {
+        do {
+            let fileName = try ImageStore.shared.saveJPEG(image)
+            let photoRef = PhotoRef(fileName: fileName)
+            item.photos.append(photoRef)
+            try? modelContext.save()
+        } catch {
+            print("Erreur lors de la sauvegarde de la photo: \(error)")
+        }
     }
     
     private func deletePhoto(_ photo: PhotoRef) {
@@ -146,12 +176,10 @@ struct ItemDetailSheet: View {
     }
     
     private func resetItem() {
-        // Supprimer les photos
         for photo in item.photos {
             ImageStore.shared.delete(photo.fileName)
         }
         
-        // Réinitialiser les valeurs
         item.status = .unknown
         item.estimatedCost = 0
         item.notes = ""
@@ -168,8 +196,51 @@ struct ItemDetailSheet: View {
     }
 }
 
+// MARK: - Camera Picker
+
+/// Wrapper UIViewControllerRepresentable pour UIImagePickerController
+/// Permet de prendre une photo directement avec l'appareil photo sans quitter l'app
+struct CameraPicker: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraPicker
+        
+        init(_ parent: CameraPicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.dismiss()
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
+
 // MARK: - Photo Row
 
+/// Ligne affichant une photo avec miniature, informations et bouton de suppression
 struct PhotoRow: View {
     let photo: PhotoRef
     let onDelete: () -> Void
